@@ -310,6 +310,25 @@ impl OfflineGgufSession {
         samples: &[f32],
         options: &transcribe_cpp::RunOptions,
     ) -> transcribe_cpp::Result<transcribe_cpp::Transcript> {
+        self.run_with(samples, options, true)
+    }
+
+    /// A warm-up run: no vocabulary prompt, since a model given a term list
+    /// over silence reads the list back instead of running quietly.
+    pub(crate) fn warm(
+        &mut self,
+        samples: &[f32],
+        options: &transcribe_cpp::RunOptions,
+    ) -> transcribe_cpp::Result<transcribe_cpp::Transcript> {
+        self.run_with(samples, options, false)
+    }
+
+    fn run_with(
+        &mut self,
+        samples: &[f32],
+        options: &transcribe_cpp::RunOptions,
+        vocabulary: bool,
+    ) -> transcribe_cpp::Result<transcribe_cpp::Transcript> {
         // transcribe-cpp 0.1.x retains input-sized scheduler buffers for the
         // session lifetime. Drop each used session before creating its
         // successor so a long inference cannot pin that high-water mark or
@@ -321,7 +340,11 @@ impl OfflineGgufSession {
         if let Some(cancel) = job_cancel() {
             session.set_cancel_token(&cancel);
         }
-        let options = self.with_vocabulary(options, false);
+        let options = if vocabulary {
+            self.with_vocabulary(options, false)
+        } else {
+            Cow::Borrowed(options)
+        };
         let result =
             keep_repetition_partial(session.run(samples, &options)).map(|mut transcript| {
                 if let Some(prompt) = &options.prompt {
@@ -405,6 +428,16 @@ fn keep_repetition_partial(
         }) => Ok(*partial),
         result => result,
     }
+}
+
+/// Whether `error` is a decode stopped at its output limit.
+pub(crate) fn output_truncated(error: &color_eyre::eyre::Report) -> bool {
+    error.chain().any(|cause| {
+        matches!(
+            cause.downcast_ref::<transcribe_cpp::Error>(),
+            Some(transcribe_cpp::Error::OutputTruncated { .. })
+        )
+    })
 }
 
 fn ran_within(last_run: Option<Instant>, now: Instant, window: Duration) -> bool {

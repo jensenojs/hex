@@ -1285,8 +1285,22 @@ impl Parakeet {
         let started = Instant::now();
         let mut silence = Vec::new();
         pad_for_parakeet(&mut silence);
-        self.transcribe(&silence)
-            .wrap_err("could not prewarm transcription model")?;
+        // A decoder that runs to its generation cap on silence (Qwen3-ASR
+        // 1.7B, #968) is warm, not broken.
+        let warm = self
+            .session
+            .warm(&silence, &self.options)
+            .map(drop)
+            .map_err(color_eyre::Report::new);
+        match warm {
+            Err(error) if crate::transcription::gguf_session::output_truncated(&error) => {
+                tracing::info!(
+                    error = format!("{error:#}"),
+                    "the warm-up run on silence hit the output limit; the model is warm"
+                );
+            }
+            result => result.wrap_err("could not prewarm transcription model")?,
+        }
         tracing::info!(
             prewarm_ms = started.elapsed().as_millis(),
             "prewarmed transcription model"

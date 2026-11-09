@@ -420,7 +420,7 @@ impl LocalTranscriber {
     /// not a failed device.
     fn warm_on_silence(&mut self) -> Result<()> {
         match self.transcribe(&vec![0.0; PREWARM_SAMPLES]) {
-            Err(error) if output_truncated(&error) => {
+            Err(error) if super::gguf_session::output_truncated(&error) => {
                 tracing::info!(
                     error = format!("{error:#}"),
                     "the warm-up run on silence hit the output limit; the model is warm"
@@ -643,16 +643,6 @@ impl LocalTranscriber {
             result => result,
         }
     }
-}
-
-/// Whether `error` is a decode stopped at its output limit.
-fn output_truncated(error: &color_eyre::eyre::Report) -> bool {
-    error.chain().any(|cause| {
-        matches!(
-            cause.downcast_ref::<transcribe_cpp::Error>(),
-            Some(transcribe_cpp::Error::OutputTruncated { .. })
-        )
-    })
 }
 
 /// The local API's own model, loaded for the selection a host asks for
